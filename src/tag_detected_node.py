@@ -7,19 +7,19 @@ import numpy as np
 from datetime import datetime
 from scipy.spatial.transform import Rotation as R
 
-filepath = None # file where tags will be saved.
-DT = 1 # period of timer that gets robot transform T_BO.
-tags = {} # dictionary of tag poses, keyed by ID.
 # --- Robot characteristics ---
 w = 0.16 # chassis width (m).
 r = 0.033 # wheel radius (m).
+# --- TF Frames ---
+TF_ORI = 'map'
+TF_CAM = 'raspicam'
 # --- Transforms ---
 tf_listener = None
 tf_buffer = None
-# we can check for these with 'rosrun tf tf_monitor' while everything is running.
 T_CO = None # tf between cam and origin.
-TF_ORI = 'map'
-TF_CAM = 'raspicam'
+filepath = None # file where tags will be saved.
+DT = 1 # period of timer that gets robot transform T_BO.
+tags = {} # dictionary of tag poses, keyed by ID.
 
 
 class KalmanFilter:
@@ -57,8 +57,8 @@ def r2state(T):
     offset = T[:3,3]
     return np.concatenate((offset, rot_q))
 
-def get_tag_detection(tag_msg):
-    # global tags  # Dictionary to store KalmanFilter objects
+def get_tag(tag_msg):
+    global tags  # Dictionary to store KalmanFilter objects
 
     if len(tag_msg.detections) == 0:
         return
@@ -85,6 +85,7 @@ def get_tag_detection(tag_msg):
             return
         # print("T_CO\n{}".format(T_CO))
         T_AO =T_CO@T_AC
+        # print("The global tag pose is \n{}".format(T_AO))
 
         state = r2state(T_AO)
         if tag_id in tags:
@@ -105,7 +106,7 @@ def get_tag_detection(tag_msg):
         # For debugging
         print('TAG:', tag_id, 'STATE:', tags[tag_id].state)
 
-def get_transform(TF_TO, TF_FROM):
+def get_trans(TF_TO, TF_FROM):
     global tf_buffer
     """
     Get the expected transform from tf.
@@ -116,7 +117,7 @@ def get_transform(TF_TO, TF_FROM):
         pose = tf_buffer.lookup_transform(TF_TO, TF_FROM,rospy.Time(0), rospy.Duration(4))
     except Exception as e:
         # requested transform was not found.
-        print("Transform from " + TF_FROM + " to " + TF_TO + " not found.")
+        print("Transform not found.")
         print("Exception: ", e)
         return None
 
@@ -137,13 +138,13 @@ def get_transform(TF_TO, TF_FROM):
                     [0,0,0,1]])
 
 
-def timer_callback(event):
+def dur_callback(event):
     """
     Update T_CO with newest pose from Cartographer.
     Save tags to file.
     """
     global T_CO
-    T_CO = get_transform(TF_FROM=TF_CAM, TF_TO=TF_ORI)
+    T_CO = get_trans(TF_FROM=TF_CAM, TF_TO=TF_ORI)
     # save to 2 decimal places.
     # T_CO = np.round(T_CO, 2)
     # print("T_CO: ", T_CO)
@@ -151,12 +152,12 @@ def timer_callback(event):
     # publish_tag_marker(pose=r2state(T_CO))
     # publish_tag_marker(tag_id=(2,), pose=r2state(get_transform(TF_TO='map', TF_FROM='base_link')))
 
-    save_tags_to_file(tags)
+    save_tags(tags)
     for tag_id in tags.keys():
-        publish_tag_marker(tag_id) # visualize the tags in rviz.
+        publish_tag_marker(tag_id)
 
 
-def save_tags_to_file(tags):
+def save_tags(tags):
     """
     We created a file whose name is the current time when the node is launched.
     All tags and IDs are saved to this file.
@@ -176,6 +177,7 @@ def save_tags_to_file(tags):
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
 from std_msgs.msg import Header, ColorRGBA
+
 def publish_tag_marker(tag_id=None, pose=None, frame_id='map'):
     marker = Marker()
     tag_id = (-1,) if tag_id is None else tag_id
@@ -196,27 +198,28 @@ def publish_tag_marker(tag_id=None, pose=None, frame_id='map'):
     marker.lifetime = rospy.Duration()
 
     print("Publishing marker for tag: ", tag_id[0])
-    tag_pub.publish(marker)
+    global marker_publisher
+    marker_publisher.publish(marker)
 
 def main():
-    global tf_listener, tf_buffer, filepath, tag_pub
-    rospy.init_node('tag_tracking_node')
+    global transform_listener, transform_buffer, detection_filepath, marker_publisher
+    rospy.init_node('tag_detect')
 
-    # generate filepath that tags will be written to.
-    dt = datetime.now()
-    run_id = dt.strftime("%Y-%m-%d-%H-%M-%S")
-    filepath = "detected-tags:" + str(run_id) + ".txt"
+    # Construct the filepath for storing detected tags.
+    current_time = datetime.now()
+    session_id = current_time.strftime("%Y-%m-%d-%H-%M-%S")
+    detection_filepath = "detected-tags:" + str(session_id) + ".txt"
 
-    # setup TF service.
-    tf_buffer = tf2_ros.Buffer(cache_time=rospy.Duration(1))
-    tf_listener = tf2_ros.TransformListener(tf_buffer)
+    # Initialize the Transform Buffer service.
+    transform_buffer = tf2_ros.Buffer(cache_time=rospy.Duration(1))
+    transform_listener = tf2_ros.TransformListener(transform_buffer)
 
-    # subscribe to apriltag detections.
-    rospy.Subscriber("/tag_detections", AprilTagDetectionArray, get_tag_detection, queue_size=1)
-    # setup publisher for tag markers.
-    tag_pub = rospy.Publisher('visualization_marker', Marker, queue_size=10)
+    # Listen for AprilTag detections.
+    rospy.Subscriber("/tag_detections", AprilTagDetectionArray, get_tag, queue_size=1)
+    # Initialize the publisher for tag visualization markers.
+    marker_publisher = rospy.Publisher('visualization_marker', Marker, queue_size=10)
 
-    rospy.Timer(rospy.Duration(DT), timer_callback)
+    rospy.Timer(rospy.Duration(DT), dur_callback)
     rospy.spin()
 
 
