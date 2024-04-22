@@ -33,6 +33,7 @@ Please install the necessary package, git clone our code in the catkin workspace
       * `rosrun map_server map_saver -f <FILEPATH>`
     * For the tag location, it is auto-saved in :
       * `detected-tags:DATETIME.txt`.
+    * Sample results are in `results` folder.
 
 ---
 
