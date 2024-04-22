@@ -1,5 +1,7 @@
 # Team Qihua's Work for EECE5550
 
+![Demo](assets/image.png)
+
 ## To run our Code
 Please install the necessary package, git clone our code in the catkin workspace of the turtlebot and the host PC and build the workspace. The following steps are to be followed to run our code:
 
